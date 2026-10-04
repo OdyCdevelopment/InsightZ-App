@@ -1,0 +1,1370 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// TEAM / RBAC
+// ─────────────────────────────────────────────
+
+model roles {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(100)
+  description String?
+  is_system   Boolean  @default(false) // built-in roles cannot be deleted
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+  updated_at  DateTime @default(now()) @db.Timestamp(6)
+
+  admin_users admin_users[]
+  permissions permissions[]
+}
+
+model permissions {
+  id      Int    @id @default(autoincrement())
+  role_id Int
+  module  String @db.VarChar(100) // e.g. "products", "scrapers"
+  action  String @db.VarChar(50) // e.g. "view", "edit", "delete"
+
+  role roles @relation(fields: [role_id], references: [id], onDelete: Cascade)
+
+  @@unique([role_id, module, action])
+  @@index([role_id])
+}
+
+model admin_users {
+  id             Int       @id @default(autoincrement())
+  username       String    @unique @db.VarChar(50)
+  email          String?   @unique @db.VarChar(255)
+  password_hash  String    @db.VarChar(255)
+  role_id        Int?
+  status         String    @default("active") @db.VarChar(20) // active | suspended
+  is_2fa_enabled Boolean   @default(false)
+  totp_secret    String?   @db.VarChar(255)
+  last_login_at  DateTime? @db.Timestamp(6)
+  created_at     DateTime  @default(now()) @db.Timestamp(6)
+  updated_at     DateTime  @default(now()) @db.Timestamp(6)
+
+  role              roles?              @relation(fields: [role_id], references: [id])
+  sessions          sessions[]
+  audit_logs        audit_logs[]
+  support_messages  support_messages[]
+  cms_blog_posts    cms_blog_posts[]
+  category_mappings category_mappings[]
+  ip_rules          ip_rules[]
+
+  @@index([role_id])
+}
+
+model sessions {
+  id            Int      @id @default(autoincrement())
+  admin_user_id Int
+  token_hash    String   @unique @db.VarChar(500)
+  ip_address    String?  @db.VarChar(45)
+  user_agent    String?
+  expires_at    DateTime @db.Timestamp(6)
+  created_at    DateTime @default(now()) @db.Timestamp(6)
+
+  admin_user admin_users @relation(fields: [admin_user_id], references: [id], onDelete: Cascade)
+
+  @@index([admin_user_id])
+}
+
+// ─────────────────────────────────────────────
+// AUDIT
+// ─────────────────────────────────────────────
+
+model audit_logs {
+  id            BigInt   @id @default(autoincrement())
+  admin_user_id Int?
+  module        String   @db.VarChar(100)
+  action        String   @db.VarChar(50)
+  entity_id     String?  @db.VarChar(100)
+  before_json   Json?
+  after_json    Json?
+  ip_address    String?  @db.VarChar(45)
+  created_at    DateTime @default(now()) @db.Timestamp(6)
+
+  admin_user admin_users? @relation(fields: [admin_user_id], references: [id], onDelete: SetNull)
+
+  @@index([admin_user_id])
+  @@index([module])
+  @@index([created_at])
+}
+
+// ─────────────────────────────────────────────
+// STORES / MERCHANTS
+// ─────────────────────────────────────────────
+
+model stores {
+  id                Int      @id @default(autoincrement())
+  name              String   @unique @db.VarChar(50)
+  domain            String   @db.VarChar(100)
+  base_url          String   @db.VarChar(255)
+  logo_url          String?  @db.VarChar(1000)
+  country           String?  @db.VarChar(100)
+  category_focus    String?  @db.VarChar(255)
+  status            String   @default("active") @db.VarChar(20) // active | paused | under_review | blacklisted
+  commission_type   String   @default("percentage") @db.VarChar(20) // flat | percentage | tiered
+  commission_rate   Decimal  @default(0.00) @db.Decimal(5, 2)
+  affiliate_network String?  @db.VarChar(100) // awin | cj | rakuten | impact | direct
+  contact_name      String?  @db.VarChar(255)
+  contact_email     String?  @db.VarChar(255)
+  detect_offers     Boolean  @default(true)
+  currency          String   @default("LKR") @db.VarChar(10)
+  created_at        DateTime @default(now()) @db.Timestamp(6)
+  updated_at        DateTime @default(now()) @db.Timestamp(6)
+
+  products          insightz_products[]
+  scrape_runs       scrape_runs[]
+  scraper_configs   scraper_configs[]
+  clicks            clicks[]
+  finance_records   finance_records[]
+  offers            offers[]
+  store_categories  store_categories[]
+  category_mappings category_mappings[]
+}
+
+// ─────────────────────────────────────────────
+// CATEGORIES & BRANDS
+// ─────────────────────────────────────────────
+
+model categories {
+  id         Int      @id @default(autoincrement())
+  name       String   @db.VarChar(255)
+  slug       String   @unique @db.VarChar(255)
+  parent_id  Int?
+  level      Int      @default(1)
+  sort_order Int      @default(0)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+
+  parent            categories?         @relation("CategoryTree", fields: [parent_id], references: [id])
+  children          categories[]        @relation("CategoryTree")
+  products          insightz_products[]
+  store_categories  store_categories[]
+  category_mappings category_mappings[]
+
+  @@index([parent_id])
+  @@index([level])
+}
+
+model brands {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(255)
+  slug        String   @unique @db.VarChar(255)
+  logo_url    String?  @db.VarChar(1000)
+  description String?
+  is_verified Boolean  @default(false)
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+  updated_at  DateTime @default(now()) @db.Timestamp(6)
+
+  products insightz_products[]
+}
+
+model store_categories {
+  store_id        Int
+  category_id     Int
+  last_scraped_at DateTime? @db.Timestamp(6)
+
+  store    stores     @relation(fields: [store_id], references: [id], onDelete: Cascade)
+  category categories @relation(fields: [category_id], references: [id], onDelete: Cascade)
+
+  @@id([store_id, category_id])
+  @@index([store_id])
+  @@index([category_id])
+}
+
+model category_mappings {
+  id                   Int       @id @default(autoincrement())
+  store_id             Int?
+  source_category_name String    @db.VarChar(500)
+  target_category_id   Int?
+  confidence_score     Int       @default(0)
+  is_reviewed          Boolean   @default(false)
+  matcher_source       String?   @db.VarChar(50) // tree | keyword | semantic | llm | title_fallback
+  status               String    @default("pending") @db.VarChar(20) // pending | approved | rejected
+  reviewed_by          Int?
+  reviewed_at          DateTime? @db.Timestamp(6)
+  created_at           DateTime  @default(now()) @db.Timestamp(6)
+
+  store    stores?      @relation(fields: [store_id], references: [id], onDelete: Cascade)
+  category categories?  @relation(fields: [target_category_id], references: [id], onDelete: Cascade)
+  reviewer admin_users? @relation(fields: [reviewed_by], references: [id], onDelete: SetNull)
+
+  @@unique([store_id, source_category_name])
+  @@index([source_category_name])
+  @@index([target_category_id])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────
+// PRODUCTS
+// ─────────────────────────────────────────────
+
+model insightz_products {
+  id                  BigInt    @id @default(autoincrement())
+  source              String    @db.VarChar(50)
+  source_domain       String    @db.VarChar(100)
+  store_id            Int?
+  category_id         Int?
+  brand_id            Int?
+  insightz_product_id BigInt
+  title               String    @db.VarChar(500)
+  handle              String?   @db.VarChar(255)
+  vendor              String?   @db.VarChar(255)
+  product_type        String?   @db.VarChar(255)
+  tags                String?
+  description         String?
+  published_at        DateTime? @db.Timestamp(6)
+  created_at          DateTime? @db.Timestamp(6)
+  updated_at          DateTime? @db.Timestamp(6)
+  product_url         String?   @db.VarChar(1000)
+  image_url           String?   @db.VarChar(1000)
+  variant_id          BigInt
+  sku                 String?   @db.VarChar(255)
+  variant_title       String?   @db.VarChar(255)
+  option1             String?   @db.VarChar(255)
+  option2             String?   @db.VarChar(255)
+  option3             String?   @db.VarChar(255)
+  option1_name        String?   @db.VarChar(100)
+  option2_name        String?   @db.VarChar(100)
+  option3_name        String?   @db.VarChar(100)
+  price               Decimal   @default(0.00) @db.Decimal(10, 2)
+  compare_at_price    Decimal?  @db.Decimal(10, 2)
+  currency            String    @default("LKR") @db.VarChar(10)
+  available           Boolean   @default(true)
+  inventory_quantity  Int?
+  is_offer            Boolean   @default(false)
+  discount_amount     Decimal?  @default(0.00) @db.Decimal(10, 2)
+  discount_percentage Decimal?  @default(0.00) @db.Decimal(5, 2)
+  first_scraped_at    DateTime  @default(now()) @db.Timestamp(6)
+  last_scraped_at     DateTime  @default(now()) @db.Timestamp(6)
+  // Catalog management fields
+  status              String    @default("live") @db.VarChar(20) // live | pending | archived
+  approval_status     String    @default("approved") @db.VarChar(20) // approved | pending_review | rejected
+  meta_title          String?   @db.VarChar(255)
+  meta_description    String?
+  slug                String?   @db.VarChar(500)
+  is_duplicate        Boolean   @default(false)
+  canonical_id        BigInt? // points to the canonical product if duplicate
+  // Deal quality scoring
+  deal_quality_score  Int? // 0-100, computed from discount vs. price_history
+  quality_flag        String?   @db.VarChar(50) // fake_discount_suspected | consistent_history
+  is_suppressed       Boolean   @default(false) // hidden from storefront due to poor quality score
+  quality_reviewed_at DateTime? @db.Timestamp(6)
+
+  store                     stores?                     @relation(fields: [store_id], references: [id])
+  category                  categories?                 @relation(fields: [category_id], references: [id])
+  brand                     brands?                     @relation(fields: [brand_id], references: [id])
+  clicks                    clicks[]
+  price_history             price_history[]
+  reviews                   reviews[]
+  saved_by                  customer_saved_items[]
+  price_alert_notifications price_alert_notifications[]
+  product_group_members     product_group_members[]
+
+  @@unique([source, insightz_product_id, variant_id], map: "uq_source_product_variant")
+  @@index([handle], map: "idx_insightz_handle")
+  @@index([is_offer], map: "idx_insightz_is_offer")
+  @@index([last_scraped_at], map: "idx_insightz_last_scraped")
+  @@index([option1], map: "idx_insightz_option1")
+  @@index([option2], map: "idx_insightz_option2")
+  @@index([price], map: "idx_insightz_price")
+  @@index([insightz_product_id], map: "idx_insightz_product_id")
+  @@index([product_type], map: "idx_insightz_product_type")
+  @@index([source], map: "idx_insightz_source")
+  @@index([variant_id], map: "idx_insightz_variant_id")
+  @@index([vendor], map: "idx_insightz_vendor")
+  @@index([status])
+  @@index([approval_status])
+  @@index([store_id])
+  @@index([category_id])
+  @@index([brand_id])
+}
+
+model price_history {
+  id         BigInt   @id @default(autoincrement())
+  product_id BigInt
+  price      Decimal  @db.Decimal(10, 2)
+  currency   String   @default("LKR") @db.VarChar(10)
+  scraped_at DateTime @default(now()) @db.Timestamp(6)
+
+  product insightz_products @relation(fields: [product_id], references: [id], onDelete: Cascade)
+
+  @@index([product_id])
+  @@index([scraped_at])
+}
+
+// ─────────────────────────────────────────────
+// OFFERS / DEALS
+// ─────────────────────────────────────────────
+
+model offers {
+  id            Int       @id @default(autoincrement())
+  title         String    @db.VarChar(500)
+  store_id      Int?
+  discount_pct  Decimal?  @db.Decimal(5, 2)
+  coupon_code   String?   @db.VarChar(100)
+  description   String?
+  is_featured   Boolean   @default(false)
+  is_flash_sale Boolean   @default(false)
+  status        String    @default("active") @db.VarChar(20) // active | scheduled | expired
+  starts_at     DateTime? @db.Timestamp(6)
+  ends_at       DateTime? @db.Timestamp(6)
+  created_at    DateTime  @default(now()) @db.Timestamp(6)
+  updated_at    DateTime  @default(now()) @db.Timestamp(6)
+
+  store stores? @relation(fields: [store_id], references: [id])
+
+  @@index([store_id])
+  @@index([status])
+  @@index([starts_at, ends_at])
+}
+
+// ─────────────────────────────────────────────
+// SCRAPER ENGINE
+// ─────────────────────────────────────────────
+
+model scraper_configs {
+  id                  Int      @id @default(autoincrement())
+  store_id            Int      @unique
+  frequency_hours     Int      @default(24)
+  rate_limit_rps      Int      @default(2)
+  proxy_enabled       Boolean  @default(false)
+  retry_count         Int      @default(3)
+  field_mappings_json Json? // maps scraped fields to internal schema
+  robots_compliant    Boolean  @default(true)
+  has_agreement       Boolean  @default(false)
+  is_active           Boolean  @default(true)
+  created_at          DateTime @default(now()) @db.Timestamp(6)
+  updated_at          DateTime @default(now()) @db.Timestamp(6)
+
+  store stores @relation(fields: [store_id], references: [id], onDelete: Cascade)
+}
+
+model scrape_runs {
+  id               BigInt    @id @default(autoincrement())
+  store_id         Int?
+  store_name       String    @db.VarChar(50)
+  status           String    @db.VarChar(20) // queued | running | completed | failed
+  products_found   Int       @default(0)
+  products_added   Int       @default(0)
+  products_updated Int       @default(0)
+  offers_found     Int       @default(0)
+  duration_seconds Decimal?  @default(0.00) @db.Decimal(8, 2)
+  error_message    String?
+  started_at       DateTime  @db.Timestamp(6)
+  completed_at     DateTime? @db.Timestamp(6)
+
+  store stores? @relation(fields: [store_id], references: [id])
+
+  @@index([status], map: "idx_scrape_status")
+  @@index([store_name, started_at], map: "idx_scrape_store_started")
+  @@index([store_id])
+}
+
+// ─────────────────────────────────────────────
+// CUSTOMERS
+// ─────────────────────────────────────────────
+
+model customers {
+  id             Int       @id @default(autoincrement())
+  first_name     String    @db.VarChar(100)
+  last_name      String    @db.VarChar(100)
+  email          String    @unique @db.VarChar(255)
+  phone          String?   @db.VarChar(50)
+  avatar_url     String?   @db.VarChar(1024)
+  status         String    @default("active") @db.VarChar(50) // active | suspended | banned
+  orders         Int       @default(0)
+  total_spent    Decimal   @default(0.00) @db.Decimal(10, 2)
+  is_banned      Boolean   @default(false)
+  gdpr_deleted   Boolean   @default(false)
+  last_active_at DateTime? @db.Timestamp(6)
+  created_at     DateTime  @default(now()) @db.Timestamp(6)
+  updated_at     DateTime  @default(now()) @db.Timestamp(6)
+
+  clicks            clicks[]
+  reviews           reviews[]
+  saved_items       customer_saved_items[]
+  support_tickets   support_tickets[]
+  notification_logs notification_logs[]
+  loyalty_wallet    loyalty_wallets?
+}
+
+model customer_saved_items {
+  id                    Int      @id @default(autoincrement())
+  customer_id           Int
+  product_id            BigInt
+  price_alert_threshold Decimal? @db.Decimal(10, 2)
+  created_at            DateTime @default(now()) @db.Timestamp(6)
+
+  customer customers         @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  product  insightz_products @relation(fields: [product_id], references: [id], onDelete: Cascade)
+
+  @@unique([customer_id, product_id])
+}
+
+// ─────────────────────────────────────────────
+// CLICKS & CONVERSIONS
+// ─────────────────────────────────────────────
+
+model clicks {
+  id           BigInt   @id @default(autoincrement())
+  product_id   BigInt?
+  store_id     Int?
+  customer_id  Int?
+  ip_address   String?  @db.VarChar(45)
+  user_agent   String?
+  referrer     String?  @db.VarChar(1000)
+  is_fraud     Boolean  @default(false)
+  fraud_reason String?  @db.VarChar(255)
+  created_at   DateTime @default(now()) @db.Timestamp(6)
+
+  product     insightz_products? @relation(fields: [product_id], references: [id])
+  store       stores?            @relation(fields: [store_id], references: [id])
+  customer    customers?         @relation(fields: [customer_id], references: [id])
+  conversions conversions[]
+
+  @@index([product_id])
+  @@index([store_id])
+  @@index([customer_id])
+  @@index([created_at])
+  @@index([is_fraud])
+}
+
+model conversions {
+  id                BigInt    @id @default(autoincrement())
+  click_id          BigInt
+  affiliate_network String?   @db.VarChar(100)
+  commission_amount Decimal?  @db.Decimal(10, 2)
+  status            String    @default("pending") @db.VarChar(50) // pending | confirmed | rejected
+  confirmed_at      DateTime? @db.Timestamp(6)
+  created_at        DateTime  @default(now()) @db.Timestamp(6)
+
+  click clicks @relation(fields: [click_id], references: [id], onDelete: Cascade)
+
+  @@index([click_id])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────
+// CMS
+// ─────────────────────────────────────────────
+
+model cms_banners {
+  id         Int      @id @default(autoincrement())
+  title      String   @db.VarChar(255)
+  image_url  String   @db.VarChar(1000)
+  link_url   String?  @db.VarChar(1000)
+  position   String   @default("homepage_hero") @db.VarChar(100)
+  is_active  Boolean  @default(true)
+  sort_order Int      @default(0)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+  updated_at DateTime @default(now()) @db.Timestamp(6)
+}
+
+model cms_pages {
+  id               Int      @id @default(autoincrement())
+  slug             String   @unique @db.VarChar(255)
+  title            String   @db.VarChar(255)
+  content          String?
+  meta_title       String?  @db.VarChar(255)
+  meta_description String?
+  is_published     Boolean  @default(false)
+  created_at       DateTime @default(now()) @db.Timestamp(6)
+  updated_at       DateTime @default(now()) @db.Timestamp(6)
+}
+
+model cms_blog_posts {
+  id               Int       @id @default(autoincrement())
+  title            String    @db.VarChar(500)
+  slug             String    @unique @db.VarChar(500)
+  content          String?
+  excerpt          String?
+  author_id        Int?
+  meta_title       String?   @db.VarChar(255)
+  meta_description String?
+  is_published     Boolean   @default(false)
+  published_at     DateTime? @db.Timestamp(6)
+  created_at       DateTime  @default(now()) @db.Timestamp(6)
+  updated_at       DateTime  @default(now()) @db.Timestamp(6)
+
+  author admin_users? @relation(fields: [author_id], references: [id], onDelete: SetNull)
+}
+
+// ─────────────────────────────────────────────
+// NOTIFICATIONS
+// ─────────────────────────────────────────────
+
+model email_templates {
+  id            Int      @id @default(autoincrement())
+  name          String   @unique @db.VarChar(255)
+  subject       String   @db.VarChar(500)
+  html_body     String
+  trigger_event String?  @db.VarChar(100) // price_drop | welcome | weekly_digest
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now()) @db.Timestamp(6)
+  updated_at    DateTime @default(now()) @db.Timestamp(6)
+
+  notification_logs notification_logs[]
+}
+
+model notification_logs {
+  id          BigInt   @id @default(autoincrement())
+  template_id Int?
+  customer_id Int?
+  recipient   String?  @db.VarChar(255)
+  status      String   @default("sent") @db.VarChar(20) // sent | failed | bounced
+  error       String?
+  sent_at     DateTime @default(now()) @db.Timestamp(6)
+
+  template email_templates? @relation(fields: [template_id], references: [id])
+  customer customers?       @relation(fields: [customer_id], references: [id])
+
+  @@index([template_id])
+  @@index([customer_id])
+  @@index([sent_at])
+}
+
+// ─────────────────────────────────────────────
+// ADMIN NOTIFICATIONS (system alerts)
+// ─────────────────────────────────────────────
+
+model admin_notifications {
+  id         Int      @id @default(autoincrement())
+  title      String   @db.VarChar(255)
+  message    String
+  type       String   @default("info") @db.VarChar(50)
+  url        String?  @db.VarChar(255)
+  is_unread  Boolean  @default(true)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+}
+
+// ─────────────────────────────────────────────
+// FINANCE
+// ─────────────────────────────────────────────
+
+model finance_records {
+  id                  Int      @id @default(autoincrement())
+  store_id            Int?
+  period_start        DateTime @db.Date
+  period_end          DateTime @db.Date
+  expected_commission Decimal  @default(0.00) @db.Decimal(12, 2)
+  actual_commission   Decimal  @default(0.00) @db.Decimal(12, 2)
+  reported_commission Decimal? @db.Decimal(12, 2) // manually entered from the affiliate network's own report
+  status              String   @default("pending") @db.VarChar(20) // pending | reconciled | discrepancy
+  notes               String?
+  created_at          DateTime @default(now()) @db.Timestamp(6)
+  updated_at          DateTime @default(now()) @db.Timestamp(6)
+
+  store stores? @relation(fields: [store_id], references: [id])
+
+  @@index([store_id])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────
+// REVIEWS
+// ─────────────────────────────────────────────
+
+model reviews {
+  id            Int      @id @default(autoincrement())
+  product_id    BigInt?
+  customer_id   Int?
+  rating        Int      @default(5)
+  body          String?
+  status        String   @default("pending") @db.VarChar(20) // pending | approved | rejected
+  ai_spam_score Int? // 0-100, higher = more likely spam/fake
+  flag_reason   String?  @db.VarChar(100) // ai_flagged | user_reported
+  created_at    DateTime @default(now()) @db.Timestamp(6)
+  updated_at    DateTime @default(now()) @db.Timestamp(6)
+
+  product  insightz_products? @relation(fields: [product_id], references: [id])
+  customer customers?         @relation(fields: [customer_id], references: [id])
+
+  @@index([product_id])
+  @@index([customer_id])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────
+// SUPPORT / HELPDESK
+// ─────────────────────────────────────────────
+
+model support_tickets {
+  id          Int       @id @default(autoincrement())
+  customer_id Int?
+  assigned_to Int? // admin_user id
+  subject     String    @db.VarChar(500)
+  status      String    @default("open") @db.VarChar(20) // open | in_progress | resolved | closed
+  priority    String    @default("normal") @db.VarChar(20) // low | normal | high | urgent
+  sla_due_at  DateTime? @db.Timestamp(6)
+  created_at  DateTime  @default(now()) @db.Timestamp(6)
+  updated_at  DateTime  @default(now()) @db.Timestamp(6)
+
+  customer customers?         @relation(fields: [customer_id], references: [id])
+  messages support_messages[]
+
+  @@index([customer_id])
+  @@index([status])
+  @@index([assigned_to])
+}
+
+model support_messages {
+  id          BigInt   @id @default(autoincrement())
+  ticket_id   Int
+  author_id   Int? // admin_user id; null if customer wrote it
+  is_internal Boolean  @default(false)
+  body        String
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+
+  ticket support_tickets @relation(fields: [ticket_id], references: [id], onDelete: Cascade)
+  author admin_users?    @relation(fields: [author_id], references: [id], onDelete: SetNull)
+
+  @@index([ticket_id])
+}
+
+// ─────────────────────────────────────────────
+// INTEGRATIONS & WEBHOOKS
+// ─────────────────────────────────────────────
+
+model integrations {
+  id          Int      @id @default(autoincrement())
+  name        String   @db.VarChar(255)
+  type        String   @db.VarChar(50) // affiliate | email | payment | webhook
+  config_json Json?
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+  updated_at  DateTime @default(now()) @db.Timestamp(6)
+}
+
+model webhooks {
+  id                Int       @id @default(autoincrement())
+  url               String    @db.VarChar(1000)
+  events_json       Json? // array of event names this webhook listens to
+  secret            String?   @db.VarChar(255)
+  is_active         Boolean   @default(true)
+  last_triggered_at DateTime? @db.Timestamp(6)
+  created_at        DateTime  @default(now()) @db.Timestamp(6)
+}
+
+// ─────────────────────────────────────────────
+// SETTINGS
+// ─────────────────────────────────────────────
+
+model system_settings {
+  id         Int      @id @default(autoincrement())
+  key        String   @unique @db.VarChar(100)
+  value_json Json?
+  group      String   @default("general") @db.VarChar(50)
+  updated_at DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([group])
+}
+
+model feature_flags {
+  id                 Int      @id @default(autoincrement())
+  key                String   @unique @db.VarChar(100)
+  is_enabled         Boolean  @default(false)
+  description        String?
+  rollout_percentage Int      @default(100)
+  environment        String   @default("production") @db.VarChar(20) // production | staging
+  updated_at         DateTime @default(now()) @db.Timestamp(6)
+}
+
+model api_keys {
+  id               Int       @id @default(autoincrement())
+  name             String    @db.VarChar(255)
+  key_hash         String    @unique @db.VarChar(500)
+  permissions_json Json?
+  last_used_at     DateTime? @db.Timestamp(6)
+  expires_at       DateTime? @db.Timestamp(6)
+  created_at       DateTime  @default(now()) @db.Timestamp(6)
+}
+
+model search_config {
+  id               Int      @id @default(autoincrement())
+  synonyms_json    Json?
+  facets_json      Json?
+  boost_rules_json Json?
+  updated_at       DateTime @default(now()) @db.Timestamp(6)
+}
+
+// ─────────────────────────────────────────────
+// USERS (internal team / non-admin)
+// ─────────────────────────────────────────────
+
+model users {
+  id         Int      @id @default(autoincrement())
+  name       String   @db.VarChar(255)
+  email      String   @unique @db.VarChar(255)
+  avatar_url String?  @db.VarChar(1024)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+}
+
+// ─────────────────────────────────────────────
+// MIGRATIONS TRACKER (internal)
+// ─────────────────────────────────────────────
+
+model migrations {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(255)
+  executed_at DateTime @default(now()) @db.Timestamp(6)
+}
+
+// ─────────────────────────────────────────────
+// CLICK FRAUD — IP allow/block list
+// ─────────────────────────────────────────────
+
+model ip_rules {
+  id         Int      @id @default(autoincrement())
+  ip_address String   @unique @db.VarChar(45)
+  rule       String   @db.VarChar(20) // blocked | whitelisted
+  reason     String?  @db.VarChar(255)
+  created_by Int?
+  created_at DateTime @default(now()) @db.Timestamp(6)
+
+  creator admin_users? @relation(fields: [created_by], references: [id], onDelete: SetNull)
+
+  @@index([rule])
+}
+
+// ─────────────────────────────────────────────
+// PRICE ALERTS
+// ─────────────────────────────────────────────
+
+model price_alert_rules {
+  id              Int      @id @default(autoincrement())
+  name            String   @db.VarChar(255)
+  condition_type  String   @db.VarChar(50) // drop_pct | below_historical_low | flash_sale_start
+  threshold_value Decimal? @db.Decimal(10, 2)
+  is_active       Boolean  @default(true)
+  created_at      DateTime @default(now()) @db.Timestamp(6)
+  updated_at      DateTime @default(now()) @db.Timestamp(6)
+}
+
+model price_alert_notifications {
+  id               BigInt   @id @default(autoincrement())
+  product_id       BigInt
+  old_price        Decimal  @db.Decimal(10, 2)
+  new_price        Decimal  @db.Decimal(10, 2)
+  drop_pct         Decimal  @db.Decimal(5, 2)
+  recipients_count Int      @default(0)
+  notified_at      DateTime @default(now()) @db.Timestamp(6)
+
+  product insightz_products @relation(fields: [product_id], references: [id], onDelete: Cascade)
+
+  @@index([product_id])
+}
+
+// ─────────────────────────────────────────────
+// SEARCH ANALYTICS
+// ─────────────────────────────────────────────
+
+model search_queries {
+  id            BigInt   @id @default(autoincrement())
+  query         String   @db.VarChar(500)
+  results_count Int      @default(0)
+  searched_at   DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([query])
+  @@index([searched_at])
+}
+
+// ─────────────────────────────────────────────
+// ML CATEGORIZATION — CROSS-VALIDATION HISTORY
+// ─────────────────────────────────────────────
+
+model ml_validation_runs {
+  id                 Int      @id @default(autoincrement())
+  run_at             DateTime @default(now()) @db.Timestamp(6)
+  precision          Decimal? @db.Decimal(5, 2)
+  coverage           Decimal? @db.Decimal(5, 2)
+  sample_size        Int?
+  status             String   @default("completed") @db.VarChar(20) // running | completed | failed
+  stage_metrics_json Json?
+  notes              String?
+
+  @@index([run_at])
+}
+
+// ─────────────────────────────────────────────
+// BUSINESS
+// ─────────────────────────────────────────────
+
+model company_profile {
+  id                   Int       @id @default(autoincrement())
+  company_name         String   @db.VarChar(255)
+  legal_name           String?  @db.VarChar(255)
+  tagline              String?  @db.VarChar(500)
+  description          String?
+  founded_date         DateTime? @db.Date
+  industry             String?  @db.VarChar(255)
+  business_type        String?  @db.VarChar(255)
+  website              String?  @db.VarChar(500)
+  email                String?  @db.VarChar(255)
+  phone                String?  @db.VarChar(50)
+  address              String?
+  logo_url             String?  @db.VarChar(1000)
+  dark_logo_url        String?  @db.VarChar(1000)
+  favicon_url          String?  @db.VarChar(1000)
+  social_facebook      String?  @db.VarChar(500)
+  social_twitter       String?  @db.VarChar(500)
+  social_instagram     String?  @db.VarChar(500)
+  social_linkedin      String?  @db.VarChar(500)
+  support_email        String?  @db.VarChar(255)
+  support_phone        String?  @db.VarChar(50)
+  support_hours        String?  @db.VarChar(255)
+  registration_number  String?  @db.VarChar(100)
+  tax_id               String?  @db.VarChar(100)
+  vat_number           String?  @db.VarChar(100)
+  registered_address   String?
+  incorporation_date   DateTime? @db.Date
+  created_at           DateTime @default(now()) @db.Timestamp(6)
+  updated_at           DateTime @default(now()) @db.Timestamp(6)
+}
+
+model departments {
+  id         Int      @id @default(autoincrement())
+  name       String   @unique @db.VarChar(255)
+  head_name  String?  @db.VarChar(255)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+
+  employees employees[]
+}
+
+model employees {
+  id            Int       @id @default(autoincrement())
+  name          String    @db.VarChar(255)
+  email         String    @unique @db.VarChar(255)
+  phone         String?   @db.VarChar(50)
+  position      String?   @db.VarChar(255)
+  department_id Int?
+  manager_name  String?   @db.VarChar(255)
+  joining_date  DateTime? @db.Date
+  status        String    @default("active") @db.VarChar(20) // active | on_leave | terminated
+  location      String?   @db.VarChar(255)
+  created_at    DateTime  @default(now()) @db.Timestamp(6)
+  updated_at    DateTime  @default(now()) @db.Timestamp(6)
+
+  department departments? @relation(fields: [department_id], references: [id], onDelete: SetNull)
+
+  @@index([department_id])
+}
+
+model locations {
+  id             Int      @id @default(autoincrement())
+  name           String   @db.VarChar(255)
+  type           String   @default("branch") @db.VarChar(20) // head_office | branch
+  address        String
+  phone          String?  @db.VarChar(50)
+  email          String?  @db.VarChar(255)
+  working_hours  String?  @db.VarChar(255)
+  manager_name   String?  @db.VarChar(255)
+  employee_count Int      @default(0)
+  status         String   @default("active") @db.VarChar(20) // active | closed
+  created_at     DateTime @default(now()) @db.Timestamp(6)
+  updated_at     DateTime @default(now()) @db.Timestamp(6)
+}
+
+model partners {
+  id            Int       @id @default(autoincrement())
+  name          String    @db.VarChar(255)
+  type          String    @db.VarChar(50) // technology | marketing | data_provider | advertising | affiliate | business
+  contact_name  String?   @db.VarChar(255)
+  contact_email String?   @db.VarChar(255)
+  status        String    @default("active") @db.VarChar(20) // active | inactive | pending
+  partner_since DateTime? @db.Date
+  notes         String?
+  created_at    DateTime  @default(now()) @db.Timestamp(6)
+  updated_at    DateTime  @default(now()) @db.Timestamp(6)
+}
+
+model affiliate_partners {
+  id                 Int      @id @default(autoincrement())
+  name               String   @db.VarChar(255)
+  tracking_id        String   @unique @db.VarChar(100)
+  commission_rate    Decimal  @default(0.00) @db.Decimal(5, 2)
+  clicks             Int      @default(0)
+  conversions        Int      @default(0)
+  revenue_generated  Decimal  @default(0.00) @db.Decimal(12, 2)
+  pending_commission Decimal  @default(0.00) @db.Decimal(12, 2)
+  paid_commission    Decimal  @default(0.00) @db.Decimal(12, 2)
+  status             String   @default("active") @db.VarChar(20) // active | paused | terminated
+  created_at         DateTime @default(now()) @db.Timestamp(6)
+  updated_at         DateTime @default(now()) @db.Timestamp(6)
+}
+
+model company_documents {
+  id           Int      @id @default(autoincrement())
+  name         String   @db.VarChar(500)
+  type         String   @db.VarChar(50) // registration_certificate | contract | affiliate_agreement | partner_agreement | tax_document | policy | internal_document
+  uploaded_by  String?  @db.VarChar(255)
+  file_size    String?  @db.VarChar(50)
+  access_level String   @default("internal") @db.VarChar(20) // public | internal | restricted
+  file_url     String?  @db.VarChar(1000)
+  created_at   DateTime @default(now()) @db.Timestamp(6)
+}
+
+// ─────────────────────────────────────────────
+// CATALOG — PRODUCT GROUPS / MATCHING / ATTRIBUTES
+// ─────────────────────────────────────────────
+
+model product_groups {
+  id         Int      @id @default(autoincrement())
+  name       String   @db.VarChar(500)
+  confidence Int      @default(0)
+  status     String   @default("pending") @db.VarChar(20) // pending | approved | rejected
+  created_at DateTime @default(now()) @db.Timestamp(6)
+  updated_at DateTime @default(now()) @db.Timestamp(6)
+
+  members product_group_members[]
+
+  @@index([status])
+}
+
+model product_group_members {
+  id         Int      @id @default(autoincrement())
+  group_id   Int
+  product_id BigInt
+  added_at   DateTime @default(now()) @db.Timestamp(6)
+
+  group   product_groups    @relation(fields: [group_id], references: [id], onDelete: Cascade)
+  product insightz_products @relation(fields: [product_id], references: [id], onDelete: Cascade)
+
+  @@unique([group_id, product_id])
+  @@index([group_id])
+  @@index([product_id])
+}
+
+model attributes {
+  id                Int      @id @default(autoincrement())
+  name              String   @unique @db.VarChar(255)
+  type              String   @default("text") @db.VarChar(20) // text | number | select
+  values_json       Json? // allowed values for select-type attributes
+  category_specific Boolean  @default(false)
+  is_required       Boolean  @default(false)
+  is_filterable     Boolean  @default(true)
+  is_searchable     Boolean  @default(false)
+  created_at        DateTime @default(now()) @db.Timestamp(6)
+  updated_at        DateTime @default(now()) @db.Timestamp(6)
+}
+
+model tags {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(255)
+  usage_count Int      @default(0)
+  category    String?  @db.VarChar(255)
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+}
+
+// ─────────────────────────────────────────────
+// OFFERS & PRICING — ANOMALIES / COUPONS
+// ─────────────────────────────────────────────
+
+model price_anomalies {
+  id             Int       @id @default(autoincrement())
+  product_id     BigInt
+  store_name     String?   @db.VarChar(255)
+  expected_min   Decimal?  @db.Decimal(10, 2)
+  expected_max   Decimal?  @db.Decimal(10, 2)
+  detected_price Decimal   @db.Decimal(10, 2)
+  deviation_pct  Decimal   @db.Decimal(6, 2)
+  status         String    @default("active") @db.VarChar(20) // active | investigating | resolved | false_positive
+  flagged_at     DateTime  @default(now()) @db.Timestamp(6)
+  resolved_at    DateTime? @db.Timestamp(6)
+
+  @@index([product_id])
+  @@index([status])
+}
+
+model coupons {
+  id              Int       @id @default(autoincrement())
+  code            String    @db.VarChar(100)
+  store_id        Int?
+  description     String?
+  status          String    @default("unchecked") @db.VarChar(20) // valid | invalid | expired | unchecked
+  last_checked_at DateTime? @db.Timestamp(6)
+  check_count     Int       @default(0)
+  created_at      DateTime  @default(now()) @db.Timestamp(6)
+
+  @@index([store_id])
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────
+// SOURCES — SCRAPER LOGS / SOURCE ERRORS
+// ─────────────────────────────────────────────
+
+model scraper_logs {
+  id         BigInt   @id @default(autoincrement())
+  store_id   Int?
+  store_name String   @db.VarChar(255)
+  level      String   @default("info") @db.VarChar(20) // info | warning | error
+  message    String
+  job_id     String?  @db.VarChar(100)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([level])
+  @@index([created_at])
+}
+
+model source_errors {
+  id           Int      @id @default(autoincrement())
+  store_id     Int?
+  store_name   String   @db.VarChar(255)
+  error_type   String   @db.VarChar(255)
+  affected_url String?  @db.VarChar(1000)
+  first_seen   DateTime @default(now()) @db.Timestamp(6)
+  last_seen    DateTime @default(now()) @db.Timestamp(6)
+  occurrences  Int      @default(1)
+  status       String   @default("open") @db.VarChar(20) // open | investigating | resolved
+
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────
+// AI & ML — MODEL REGISTRY / DETECTION / RECOMMENDATIONS
+// ─────────────────────────────────────────────
+
+model ml_models {
+  id                    Int      @id @default(autoincrement())
+  name                  String   @db.VarChar(255)
+  version               String   @db.VarChar(50)
+  type                  String   @db.VarChar(100)
+  accuracy              Decimal? @db.Decimal(5, 2)
+  precision_score       Decimal? @db.Decimal(5, 2)
+  recall_score          Decimal? @db.Decimal(5, 2)
+  f1_score              Decimal? @db.Decimal(5, 2)
+  status                String   @default("staging") @db.VarChar(20) // production | staging | archived
+  deployment_status     String?  @db.VarChar(50)
+  previous_version      String?  @db.VarChar(50)
+  previous_metrics_json Json?
+  created_at            DateTime @default(now()) @db.Timestamp(6)
+  updated_at            DateTime @default(now()) @db.Timestamp(6)
+
+  training_jobs ml_training_jobs[]
+}
+
+model ml_training_jobs {
+  id           Int       @id @default(autoincrement())
+  model_id     Int?
+  model_name   String    @db.VarChar(255)
+  dataset      String?   @db.VarChar(255)
+  status       String    @default("running") @db.VarChar(20) // running | completed | failed
+  accuracy     Decimal?  @db.Decimal(5, 2)
+  started_at   DateTime  @default(now()) @db.Timestamp(6)
+  completed_at DateTime? @db.Timestamp(6)
+
+  model ml_models? @relation(fields: [model_id], references: [id], onDelete: SetNull)
+
+  @@index([model_id])
+}
+
+model ai_detection_issues {
+  id              Int      @id @default(autoincrement())
+  type            String   @db.VarChar(20) // price | image
+  product_id      BigInt?
+  product_title   String?  @db.VarChar(500)
+  store_name      String?  @db.VarChar(255)
+  issue           String?  @db.VarChar(500) // price: detected issue description; image: detected label
+  confidence      Decimal  @default(0.00) @db.Decimal(5, 2)
+  old_price       Decimal? @db.Decimal(10, 2)
+  suggested_price Decimal? @db.Decimal(10, 2)
+  status          String   @default("pending") @db.VarChar(20) // price: pending|confirmed|dismissed — image: auto_approved|needs_review|rejected
+  created_at      DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([type])
+  @@index([status])
+}
+
+model recommendation_types {
+  id             Int      @id @default(autoincrement())
+  type           String   @unique @db.VarChar(100) // similar_products | related_products | trending | personalized | same_brand | same_category | similar_price | frequently_viewed
+  impressions    Int      @default(0)
+  clicks         Int      @default(0)
+  model_version  String?  @db.VarChar(50)
+  avg_confidence Decimal? @db.Decimal(5, 2)
+  status         String   @default("active") @db.VarChar(20) // active | degraded | disabled
+  updated_at     DateTime @default(now()) @db.Timestamp(6)
+}
+
+model recommendation_failures {
+  id         BigInt   @id @default(autoincrement())
+  type       String   @db.VarChar(100)
+  reason     String   @db.VarChar(500)
+  session_id String?  @db.VarChar(100)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([created_at])
+}
+
+// ─────────────────────────────────────────────
+// CUSTOMERS — ACTIVITY / REPORTS / LOYALTY
+// ─────────────────────────────────────────────
+
+model customer_activity_log {
+  id          BigInt   @id @default(autoincrement())
+  customer_id Int?
+  action      String   @db.VarChar(255)
+  device      String?  @db.VarChar(255)
+  ip_address  String?  @db.VarChar(45)
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([customer_id])
+  @@index([created_at])
+}
+
+model user_reports {
+  id                   Int      @id @default(autoincrement())
+  reported_customer_id Int?
+  reported_content     String?  @db.VarChar(500)
+  reason               String   @db.VarChar(255)
+  reporter_name        String?  @db.VarChar(255)
+  status               String   @default("open") @db.VarChar(20) // open | reviewing | resolved | dismissed
+  created_at           DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([status])
+}
+
+model loyalty_wallets {
+  id                 Int       @id @default(autoincrement())
+  customer_id        Int       @unique
+  tier               String    @default("Bronze") @db.VarChar(20) // Gold | Silver | Bronze
+  balance            Decimal   @default(0.00) @db.Decimal(12, 2)
+  lifetime_cashback  Decimal   @default(0.00) @db.Decimal(12, 2)
+  last_redemption_at DateTime? @db.Timestamp(6)
+  created_at         DateTime  @default(now()) @db.Timestamp(6)
+  updated_at         DateTime  @default(now()) @db.Timestamp(6)
+
+  customer     customers             @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  transactions wallet_transactions[]
+}
+
+model wallet_transactions {
+  id         Int      @id @default(autoincrement())
+  wallet_id  Int
+  direction  String   @db.VarChar(10) // credit | debit
+  amount     Decimal  @db.Decimal(12, 2)
+  reason     String?  @db.VarChar(500)
+  created_at DateTime @default(now()) @db.Timestamp(6)
+
+  wallet loyalty_wallets @relation(fields: [wallet_id], references: [id], onDelete: Cascade)
+
+  @@index([wallet_id])
+}
+
+// ─────────────────────────────────────────────
+// ENGAGEMENT — PRODUCT VIEWS
+// ─────────────────────────────────────────────
+
+model product_views {
+  id         BigInt   @id @default(autoincrement())
+  product_id BigInt?
+  viewed_at  DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([product_id])
+  @@index([viewed_at])
+}
+
+// ─────────────────────────────────────────────
+// MARKETING
+// ─────────────────────────────────────────────
+
+model campaigns {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(255)
+  start_date  DateTime? @db.Date
+  end_date    DateTime? @db.Date
+  target      String?   @db.VarChar(255)
+  priority    String    @default("medium") @db.VarChar(20) // high | medium | low
+  status      String    @default("draft") @db.VarChar(20) // draft | scheduled | active | ended
+  budget      Decimal?  @db.Decimal(12, 2)
+  impressions Int       @default(0)
+  clicks      Int       @default(0)
+  created_at  DateTime  @default(now()) @db.Timestamp(6)
+  updated_at  DateTime  @default(now()) @db.Timestamp(6)
+
+  @@index([status])
+}
+
+model featured_placements {
+  id            Int       @id @default(autoincrement())
+  product_id    BigInt?
+  product_title String?   @db.VarChar(500)
+  location      String    @db.VarChar(50) // homepage_hero | category_top | search_boost
+  start_date    DateTime? @db.Date
+  end_date      DateTime? @db.Date
+  priority      String    @default("medium") @db.VarChar(20)
+  status        String    @default("scheduled") @db.VarChar(20) // active | scheduled | expired
+  created_at    DateTime  @default(now()) @db.Timestamp(6)
+}
+
+model sponsored_placements {
+  id            Int      @id @default(autoincrement())
+  product_id    BigInt?
+  product_title String?  @db.VarChar(500)
+  store_id      Int?
+  sponsor_name  String?  @db.VarChar(255)
+  bid_amount    Decimal  @default(0.00) @db.Decimal(10, 2)
+  impressions   Int      @default(0)
+  clicks        Int      @default(0)
+  spend         Decimal  @default(0.00) @db.Decimal(12, 2)
+  status        String   @default("active") @db.VarChar(20)
+  created_at    DateTime @default(now()) @db.Timestamp(6)
+}
+
+model promotions {
+  id            Int       @id @default(autoincrement())
+  name          String    @db.VarChar(255)
+  discount_type String    @db.VarChar(20) // percentage | fixed_amount | bogo
+  scope         String    @default("sitewide") @db.VarChar(20) // sitewide | category | product
+  start_date    DateTime? @db.Date
+  end_date      DateTime? @db.Date
+  status        String    @default("draft") @db.VarChar(20) // draft | scheduled | active | expired
+  created_at    DateTime  @default(now()) @db.Timestamp(6)
+}
+
+model marketing_workflows {
+  id           Int      @id @default(autoincrement())
+  name         String   @db.VarChar(255)
+  trigger_type String?  @db.VarChar(100)
+  segment      String?  @db.VarChar(255)
+  channel      String?  @db.VarChar(50) // email | sms | push
+  status       String   @default("active") @db.VarChar(20) // active | paused | draft
+  open_rate    Decimal? @db.Decimal(5, 2)
+  click_rate   Decimal? @db.Decimal(5, 2)
+  created_at   DateTime @default(now()) @db.Timestamp(6)
+  updated_at   DateTime @default(now()) @db.Timestamp(6)
+}
+
+model click_recovery_actions {
+  id       Int      @id @default(autoincrement())
+  click_id BigInt   @unique
+  sent_at  DateTime @default(now()) @db.Timestamp(6)
+  status   String   @default("sent") @db.VarChar(20) // sent | opened | converted
+}
+
+// ─────────────────────────────────────────────
+// CONTENT — FAQ / MEDIA
+// ─────────────────────────────────────────────
+
+model faqs {
+  id           Int      @id @default(autoincrement())
+  question     String   @db.VarChar(500)
+  answer       String
+  category     String?  @db.VarChar(255)
+  sort_order   Int      @default(0)
+  is_published Boolean  @default(true)
+  created_at   DateTime @default(now()) @db.Timestamp(6)
+  updated_at   DateTime @default(now()) @db.Timestamp(6)
+}
+
+model media_assets {
+  id            Int      @id @default(autoincrement())
+  filename      String   @db.VarChar(500)
+  type          String   @db.VarChar(20) // image | video | document
+  file_url      String   @db.VarChar(1000)
+  file_size     String?  @db.VarChar(50)
+  used_in_count Int      @default(0)
+  created_at    DateTime @default(now()) @db.Timestamp(6)
+}
+
+// ─────────────────────────────────────────────
+// FINANCE — TRANSACTIONS / INVOICES / REPORTS
+// ─────────────────────────────────────────────
+
+model transactions {
+  id         Int      @id @default(autoincrement())
+  type       String   @db.VarChar(50) // commission_payout | refund | adjustment | fee
+  amount     Decimal  @db.Decimal(12, 2)
+  party_name String?  @db.VarChar(255)
+  status     String   @default("pending") @db.VarChar(20) // completed | pending | failed
+  created_at DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([status])
+}
+
+model invoices {
+  id             Int      @id @default(autoincrement())
+  invoice_number String   @unique @db.VarChar(100)
+  party_name     String   @db.VarChar(255)
+  amount         Decimal  @db.Decimal(12, 2)
+  issue_date     DateTime @db.Date
+  due_date       DateTime @db.Date
+  status         String   @default("pending") @db.VarChar(20) // paid | pending | overdue
+  created_at     DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([status])
+}
+
+model financial_reports {
+  id           Int      @id @default(autoincrement())
+  name         String   @db.VarChar(255)
+  period       String   @db.VarChar(100)
+  type         String   @db.VarChar(50) // revenue_summary | commission_report | tax_report | pl_statement
+  generated_by String?  @db.VarChar(255)
+  generated_at DateTime @default(now()) @db.Timestamp(6)
+}
+
+// ─────────────────────────────────────────────
+// SUPPORT — CONTACT MESSAGES
+// ─────────────────────────────────────────────
+
+model contact_messages {
+  id          Int      @id @default(autoincrement())
+  sender_name String   @db.VarChar(255)
+  email       String   @db.VarChar(255)
+  subject     String   @db.VarChar(500)
+  message     String
+  status      String   @default("new") @db.VarChar(20) // new | read | replied
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([status])
+}
+
+// ─────────────────────────────────────────────
+// SECURITY — LOGIN ATTEMPTS
+// ─────────────────────────────────────────────
+
+model login_attempts {
+  id            Int      @id @default(autoincrement())
+  admin_user_id Int?
+  username      String?  @db.VarChar(100)
+  ip_address    String?  @db.VarChar(45)
+  device        String?  @db.VarChar(255)
+  status        String   @db.VarChar(20) // success | failed | suspicious
+  created_at    DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([status])
+  @@index([created_at])
+}
+
+// ─────────────────────────────────────────────
+// SYSTEM — API LOGS / BACKUPS
+// ─────────────────────────────────────────────
+
+model api_request_logs {
+  id          BigInt   @id @default(autoincrement())
+  api_key_id  Int?
+  endpoint    String   @db.VarChar(500)
+  status_code Int
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([api_key_id])
+  @@index([created_at])
+}
+
+model backups {
+  id           Int       @id @default(autoincrement())
+  type         String    @db.VarChar(20) // daily | weekly_full | monthly_archive
+  file_path    String?   @db.VarChar(1000)
+  size_bytes   BigInt?
+  status       String    @default("in_progress") @db.VarChar(20) // completed | failed | in_progress
+  duration_ms  Int?
+  started_at   DateTime  @default(now()) @db.Timestamp(6)
+  completed_at DateTime? @db.Timestamp(6)
+}
